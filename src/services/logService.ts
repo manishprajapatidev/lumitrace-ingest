@@ -4,7 +4,7 @@
 import { Buffer } from 'node:buffer';
 import { pool, query } from '../db/pool.js';
 import type { IncomingLog } from '../schemas/index.js';
-import type { LogRow, Severity } from '../types/domain.js';
+import type { ApiLog, LogRow, Severity } from '../types/domain.js';
 import { pubsub } from './pubsub.js';
 
 export interface InsertableLog extends IncomingLog {
@@ -65,8 +65,42 @@ export interface HistoryQuery {
 }
 
 export interface HistoryResult {
-  logs: LogRow[];
+  logs: ApiLog[];
   nextCursor?: string;
+}
+
+export interface OwnedHistoryQuery {
+  ownerId: string;
+  sourceIds?: string[];
+  from?: Date;
+  to?: Date;
+  q?: string;
+  severities?: Severity[];
+  limit: number;
+  cursor?: string;
+}
+
+function topLevelString(attributes: Record<string, unknown>, key: string): string | undefined {
+  const value = attributes[key];
+  return typeof value === 'string' && value.length > 0 ? value : undefined;
+}
+
+export function toApiLog(row: LogRow): ApiLog {
+  return {
+    id: row.id,
+    timestamp: row.ts.toISOString(),
+    sourceId: row.source_id,
+    severity: row.severity,
+    message: row.message,
+    statusCode: row.status_code,
+    attributes: row.attributes,
+    raw: row.raw,
+    service: topLevelString(row.attributes, 'service'),
+    host: topLevelString(row.attributes, 'host'),
+    environment: topLevelString(row.attributes, 'environment'),
+    trace_id: topLevelString(row.attributes, 'trace_id'),
+    span_id: topLevelString(row.attributes, 'span_id'),
+  };
 }
 
 export async function fetchHistory(q: HistoryQuery): Promise<HistoryResult> {
@@ -106,12 +140,61 @@ export async function fetchHistory(q: HistoryQuery): Promise<HistoryResult> {
                 LIMIT $${i}`;
 
   const res = await query<LogRow>(sql, params as never);
-  const rows = res.rows;
-  const hasMore = rows.length > q.limit;
-  const sliced = hasMore ? rows.slice(0, q.limit) : rows;
+  return toHistoryResult(res.rows, q.limit);
+}
+
+export async function fetchOwnedHistory(q: OwnedHistoryQuery): Promise<HistoryResult> {
+  const where: string[] = ['p.owner_id = $1'];
+  const params: unknown[] = [q.ownerId];
+  let i = 2;
+
+  if (q.sourceIds && q.sourceIds.length > 0) {
+    where.push(`l.source_id = ANY($${i++}::uuid[])`);
+    params.push(q.sourceIds);
+  }
+  if (q.from) {
+    where.push(`l.ts >= $${i++}`);
+    params.push(q.from);
+  }
+  if (q.to) {
+    where.push(`l.ts <= $${i++}`);
+    params.push(q.to);
+  }
+  if (q.q) {
+    where.push(`l.message ILIKE $${i++}`);
+    params.push(`%${q.q}%`);
+  }
+  if (q.severities && q.severities.length > 0) {
+    where.push(`l.severity = ANY($${i++}::text[])`);
+    params.push(q.severities);
+  }
+  if (q.cursor) {
+    const parsed = parseCursor(q.cursor);
+    if (parsed) {
+      where.push(`(l.ts, l.id) < ($${i++}, $${i++})`);
+      params.push(parsed.ts, parsed.id);
+    }
+  }
+
+  params.push(q.limit + 1);
+  const sql = `SELECT l.ts, l.id, l.source_id, l.severity, l.message, l.status_code, l.attributes, l.raw
+                 FROM logs l
+                 JOIN sources s ON s.id = l.source_id
+                 JOIN projects p ON p.id = s.project_id
+                WHERE ${where.join(' AND ')}
+                ORDER BY l.ts DESC, l.id DESC
+                LIMIT $${i}`;
+
+  const res = await query<LogRow>(sql, params as never);
+  return toHistoryResult(res.rows, q.limit);
+}
+
+function toHistoryResult(rows: LogRow[], limit: number): HistoryResult {
+  const hasMore = rows.length > limit;
+  const sliced = hasMore ? rows.slice(0, limit) : rows;
   const last = sliced[sliced.length - 1];
   const nextCursor = hasMore && last ? makeCursor(last.ts, last.id) : undefined;
-  return { logs: sliced, nextCursor };
+  return { logs: sliced.map(toApiLog), nextCursor };
 }
 
 function makeCursor(ts: Date, id: string): string {

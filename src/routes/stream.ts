@@ -8,10 +8,10 @@ import type { FastifyInstance } from 'fastify';
 import { errors } from '../lib/errors.js';
 import { logger } from '../lib/logger.js';
 import { requireAuth } from '../middleware/auth.js';
-import { fetchHistory } from '../services/logService.js';
+import { fetchHistory, toApiLog } from '../services/logService.js';
 import { pubsub } from '../services/pubsub.js';
 import { sourceService } from '../services/sourceService.js';
-import type { LogRow } from '../types/domain.js';
+import type { ApiLog, LogRow } from '../types/domain.js';
 
 const HEARTBEAT_MS = 15_000;
 const BACKFILL = 200;
@@ -34,18 +34,19 @@ export async function streamRoutes(app: FastifyInstance): Promise<void> {
       });
       reply.raw.write(`retry: 3000\n\n`);
 
-      const send = (event: LogRow): void => {
+      const sendApiLog = (event: ApiLog): void => {
         try {
           reply.raw.write(`data: ${JSON.stringify(event)}\n\n`);
         } catch (err) {
           logger.warn({ err, sourceId }, 'sse write failed');
         }
       };
+      const send = (event: LogRow): void => sendApiLog(toApiLog(event));
 
       // Backfill — newest at top so the client can prepend.
       try {
         const hist = await fetchHistory({ sourceId, limit: BACKFILL });
-        for (const row of [...hist.logs].reverse()) send(row);
+        for (const row of [...hist.logs].reverse()) sendApiLog(row);
       } catch (err) {
         logger.warn({ err, sourceId }, 'sse backfill failed');
       }

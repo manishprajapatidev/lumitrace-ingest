@@ -8,11 +8,12 @@ import { requireAuth } from '../middleware/auth.js';
 import {
   CreateProjectZ,
   CreateSourceZ,
+  GlobalLogsQueryZ,
   IncomingLogZ,
   LogsQueryZ,
   UpdateSourceZ,
 } from '../schemas/index.js';
-import { fetchHistory, insertLogs } from '../services/logService.js';
+import { fetchHistory, fetchOwnedHistory, insertLogs } from '../services/logService.js';
 import { projectService, sourceService } from '../services/sourceService.js';
 
 const IdParamZ = z.object({ id: z.string().uuid() });
@@ -98,6 +99,25 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
   });
 
   // --- history --------------------------------------------------------------
+  app.get('/v1/logs', async (req) => {
+    const user = req.user!;
+    const q = GlobalLogsQueryZ.parse(req.query);
+    const sevs = q.sev ? (Array.isArray(q.sev) ? q.sev : [q.sev]) : undefined;
+    const sourceIds = q.sourceId
+      ? (Array.isArray(q.sourceId) ? q.sourceId : [q.sourceId])
+      : undefined;
+    return fetchOwnedHistory({
+      ownerId: user.id,
+      sourceIds,
+      from: q.from ? new Date(q.from) : undefined,
+      to: q.to ? new Date(q.to) : undefined,
+      q: q.q,
+      severities: sevs,
+      limit: q.limit,
+      cursor: q.cursor,
+    });
+  });
+
   app.get<{ Params: { id: string } }>('/v1/sources/:id/logs', async (req) => {
     const user = req.user!;
     const { id } = IdParamZ.parse(req.params);

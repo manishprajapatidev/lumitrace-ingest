@@ -3,7 +3,12 @@
  */
 import { z } from 'zod';
 
-export const SeverityZ = z.enum(['FATAL', 'ERROR', 'WARN', 'INFO', 'DEBUG', 'TRACE']);
+const SeverityLiteralZ = z.enum(['FATAL', 'ERROR', 'WARN', 'INFO', 'DEBUG', 'TRACE']);
+export const SeverityZ = z
+  .string()
+  .trim()
+  .transform((value) => value.toUpperCase())
+  .pipe(SeverityLiteralZ);
 export const SourceTypeZ = z.enum(['pm2', 'nginx', 'apache', 'journald', 'file', 'http']);
 export const EnvironmentZ = z.enum(['production', 'staging', 'dev']);
 
@@ -66,6 +71,16 @@ export const LogsQueryZ = z.object({
 });
 
 export type LogsQuery = z.infer<typeof LogsQueryZ>;
+
+export const GlobalLogsQueryZ = z.object({
+  from: z.coerce.number().int().optional(),
+  to: z.coerce.number().int().optional(),
+  q: z.string().max(200).optional(),
+  sev: z.union([SeverityZ, z.array(SeverityZ)]).optional(),
+  sourceId: z.union([z.string().uuid(), z.array(z.string().uuid())]).optional(),
+  limit: z.coerce.number().int().min(1).max(1000).default(200),
+  cursor: z.string().max(64).optional(),
+});
 
 export const RegisterRequestZ = z
   .object({

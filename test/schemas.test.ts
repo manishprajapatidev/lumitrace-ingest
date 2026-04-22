@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+  GlobalLogsQueryZ,
   IncomingLogZ,
   CreateSourceZ,
   LogsQueryZ,
@@ -32,6 +33,21 @@ describe('IncomingLogZ', () => {
     expect(a.ts.getTime()).toBeGreaterThan(0);
     expect(b.ts.getTime()).toBe(1_700_000_000_000);
   });
+
+  it('normalizes lower-case severity', () => {
+    const r = IncomingLogZ.parse({ message: 'hello', severity: 'info' });
+    expect(r.severity).toBe('INFO');
+  });
+
+  it('normalizes mixed-case severity', () => {
+    const r = IncomingLogZ.parse({ message: 'hello', severity: 'Warn' });
+    expect(r.severity).toBe('WARN');
+  });
+
+  it('rejects unknown severity', () => {
+    const r = IncomingLogZ.safeParse({ message: 'hello', severity: 'notice' });
+    expect(r.success).toBe(false);
+  });
 });
 
 describe('CreateSourceZ', () => {
@@ -46,6 +62,18 @@ describe('LogsQueryZ', () => {
     const r = LogsQueryZ.parse({ limit: '50', from: '1700000000000' });
     expect(r.limit).toBe(50);
     expect(r.from).toBe(1_700_000_000_000);
+  });
+});
+
+describe('GlobalLogsQueryZ', () => {
+  it('accepts repeated sourceId and severity filters', () => {
+    const r = GlobalLogsQueryZ.parse({
+      sourceId: ['11111111-1111-1111-1111-111111111111'],
+      sev: ['info', 'error'],
+      limit: '25',
+    });
+    expect(r.limit).toBe(25);
+    expect(r.sev).toEqual(['INFO', 'ERROR']);
   });
 });
 

@@ -28,7 +28,7 @@ Auth (email+password) ──► POST /v1/auth/register  ──► email OTP (stu
 
 | Method | Path | Auth | Notes |
 |---|---|---|---|
-| `POST` | `/v1/ingest` | Bearer source token | NDJSON body, ≤ 1 MB / 1000 lines |
+| `POST` | `/v1/ingest` | Bearer source token | NDJSON body, ≤ 1 MB / 1000 lines, severity is case-insensitive |
 | `POST` | `/v1/auth/register` | – | Create account, store password hash, send OTP |
 | `POST` | `/v1/auth/verify-otp` | – | Verify 6-digit OTP, returns access + refresh |
 | `POST` | `/v1/auth/resend-otp` | – | Resend OTP with 60s cooldown |
@@ -38,6 +38,7 @@ Auth (email+password) ──► POST /v1/auth/register  ──► email OTP (stu
 | `GET`  | `/v1/auth/me` | JWT | Returns current user profile |
 | `GET`  | `/v1/sources/:id/stream` | JWT (header **or** `?token=` for `EventSource`) | SSE, 200-line backfill, 15s heartbeat |
 | `GET`  | `/v1/sources/:id/logs` | JWT | `from`,`to`,`q`,`sev[]`,`limit`,`cursor` |
+| `GET`  | `/v1/logs` | JWT | Global history across all owned sources, `from`,`to`,`q`,`sev[]`,`sourceId[]`,`limit`,`cursor` |
 | `POST` | `/v1/projects` | JWT | Create project |
 | `GET`  | `/v1/projects` | JWT | List user's projects |
 | `DELETE` | `/v1/projects/:id` | JWT | |
@@ -111,7 +112,7 @@ request.headers.Authorization = "Bearer ${LUMITRACE_TOKEN}"
 - **Access JWTs** are locally issued HS256 tokens (`sub`, `email`, `iat`, `exp`, `jti`) and default to 15 minutes.
 - **Refresh tokens** are 32-byte opaque secrets, hashed at rest, valid for 30 days by default, and rotated on every refresh.
 - **Source tokens** are 32 random bytes (base64url) prefixed with `lt_`. Only the SHA-256 hash is stored. Plaintext is shown once on create / rotate.
-- **JWT** for admin/UI routes (HS256 by default — swap to JWKS in `middleware/auth.ts` for OIDC).
+- **JWT** for admin/UI routes (HS256 by default — swap to JWKS in `middleware/auth.ts` for OIDC). SSE already accepts `?token=` on GET routes for `EventSource` compatibility.
 - **CORS** enforced on admin/SSE routes; ingest accepts any origin (token is the auth).
 - **Rate limit**: per-token (in-memory, sliding 1-minute window) + global IP fallback via `@fastify/rate-limit`, plus auth-specific per-IP and per-email limits for register/login/resend.
 - **Payload caps**: 1 MB body / 1000 lines / 32 KB per line, enforced before parsing.

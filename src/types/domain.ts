@@ -67,6 +67,22 @@ export interface LogRow {
   raw: string | null;
 }
 
+export interface ApiLog {
+  id: string;
+  timestamp: string;
+  sourceId: string;
+  severity: Severity;
+  message: string;
+  statusCode: number | null;
+  attributes: Record<string, unknown>;
+  raw: string | null;
+  service?: string;
+  host?: string;
+  environment?: string;
+  trace_id?: string;
+  span_id?: string;
+}
+
 export interface AuthUser {
   id: string;
   email?: string;
