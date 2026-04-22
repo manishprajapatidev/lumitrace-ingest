@@ -1,7 +1,7 @@
 /**
  * Builds the Fastify app — exported so tests can import it without binding a port.
  */
-import Fastify, { type FastifyInstance } from 'fastify';
+import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
 import sensible from '@fastify/sensible';
@@ -14,7 +14,7 @@ import { ingestRoutes } from './routes/ingest.js';
 import { streamRoutes } from './routes/stream.js';
 import { adminRoutes } from './routes/admin.js';
 
-export async function buildApp(): Promise<FastifyInstance> {
+export async function buildApp() {
   const app = Fastify({
     loggerInstance: logger,
     trustProxy: config.TRUST_PROXY,
