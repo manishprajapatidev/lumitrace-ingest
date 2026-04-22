@@ -22,4 +22,13 @@ describe('TokenRateLimiter', () => {
     const r = rl.hit('x');
     expect(r.remaining).toBe(4);
   });
+
+  it('supports custom windows', () => {
+    const rl = new TokenRateLimiter(1, 15 * 60 * 1000);
+    const first = rl.hit('email:user@example.com');
+    const second = rl.hit('email:user@example.com');
+    expect(first.allowed).toBe(true);
+    expect(second.allowed).toBe(false);
+    expect(second.resetIn).toBeGreaterThan(60_000);
+  });
 });

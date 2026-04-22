@@ -17,6 +17,11 @@ Vector / curl / agent  ──► POST /v1/ingest (NDJSON, Bearer <source token>)
 
 Frontend (JWT)  ──► GET /v1/sources/:id/logs  (paginated history, keyset cursor)
                 ──► POST /v1/sources, /rotate-token, /test-event, …
+
+Auth (email+password) ──► POST /v1/auth/register  ──► email OTP (stubbed in logs)
+                      ──► POST /v1/auth/verify-otp ──► access JWT + refresh token
+                      ──► POST /v1/auth/login      ──► access JWT + refresh token
+                      ──► POST /v1/auth/refresh    ──► rotated refresh token
 ```
 
 ## Endpoints
@@ -24,6 +29,13 @@ Frontend (JWT)  ──► GET /v1/sources/:id/logs  (paginated history, keyset c
 | Method | Path | Auth | Notes |
 |---|---|---|---|
 | `POST` | `/v1/ingest` | Bearer source token | NDJSON body, ≤ 1 MB / 1000 lines |
+| `POST` | `/v1/auth/register` | – | Create account, store password hash, send OTP |
+| `POST` | `/v1/auth/verify-otp` | – | Verify 6-digit OTP, returns access + refresh |
+| `POST` | `/v1/auth/resend-otp` | – | Resend OTP with 60s cooldown |
+| `POST` | `/v1/auth/login` | – | Password login; unverified users trigger OTP resend |
+| `POST` | `/v1/auth/refresh` | – | Rotates opaque refresh token |
+| `POST` | `/v1/auth/logout` | Refresh token | Revokes refresh token |
+| `GET`  | `/v1/auth/me` | JWT | Returns current user profile |
 | `GET`  | `/v1/sources/:id/stream` | JWT (header **or** `?token=` for `EventSource`) | SSE, 200-line backfill, 15s heartbeat |
 | `GET`  | `/v1/sources/:id/logs` | JWT | `from`,`to`,`q`,`sev[]`,`limit`,`cursor` |
 | `POST` | `/v1/projects` | JWT | Create project |
@@ -94,10 +106,14 @@ request.headers.Authorization = "Bearer ${LUMITRACE_TOKEN}"
 
 ## Security model
 
+- **Passwords** are hashed with bcrypt (cost 12). Emails are normalised to lowercase before storage / comparison.
+- **Email OTPs** are 6-digit codes. Only the SHA-256 hash is stored; TTL defaults to 10 minutes with a 60-second resend cooldown and 15-minute lockout after 5 wrong attempts.
+- **Access JWTs** are locally issued HS256 tokens (`sub`, `email`, `iat`, `exp`, `jti`) and default to 15 minutes.
+- **Refresh tokens** are 32-byte opaque secrets, hashed at rest, valid for 30 days by default, and rotated on every refresh.
 - **Source tokens** are 32 random bytes (base64url) prefixed with `lt_`. Only the SHA-256 hash is stored. Plaintext is shown once on create / rotate.
 - **JWT** for admin/UI routes (HS256 by default — swap to JWKS in `middleware/auth.ts` for OIDC).
 - **CORS** enforced on admin/SSE routes; ingest accepts any origin (token is the auth).
-- **Rate limit**: per-token (in-memory, sliding 1-minute window) + global IP fallback via `@fastify/rate-limit`.
+- **Rate limit**: per-token (in-memory, sliding 1-minute window) + global IP fallback via `@fastify/rate-limit`, plus auth-specific per-IP and per-email limits for register/login/resend.
 - **Payload caps**: 1 MB body / 1000 lines / 32 KB per line, enforced before parsing.
 - **Validation**: every line through Zod; rejected lines counted + sampled, never indexed.
 - **Postgres**: parameterised queries only, no string concatenation, pool with timeouts.

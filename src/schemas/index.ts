@@ -15,14 +15,14 @@ export const CreateProjectZ = z.object({
     .string()
     .regex(/^#[0-9a-fA-F]{6}$/, 'color must be hex like #6366f1')
     .default('#6366f1'),
-});
+}).strict();
 
 export const CreateSourceZ = z.object({
   projectId: z.string().uuid(),
   name: z.string().trim().min(1).max(120),
   type: SourceTypeZ,
   config: z.record(z.string(), z.string()).default({}),
-});
+}).strict();
 
 export const UpdateSourceZ = z
   .object({
@@ -66,3 +66,42 @@ export const LogsQueryZ = z.object({
 });
 
 export type LogsQuery = z.infer<typeof LogsQueryZ>;
+
+export const RegisterRequestZ = z
+  .object({
+    email: z.string().trim().email(),
+    password: z.string().min(1).max(256),
+  })
+  .strict();
+
+export const VerifyOtpRequestZ = z
+  .object({
+    email: z.string().trim().email(),
+    code: z.string().regex(/^\d{6}$/, 'code must be 6 digits'),
+  })
+  .strict();
+
+export const ResendOtpRequestZ = z
+  .object({
+    email: z.string().trim().email(),
+  })
+  .strict();
+
+export const LoginRequestZ = z
+  .object({
+    email: z.string().trim().email(),
+    password: z.string().min(1).max(256),
+  })
+  .strict();
+
+export const RefreshRequestZ = z
+  .object({
+    refreshToken: z.string().min(1).max(512),
+  })
+  .strict();
+
+export const LogoutRequestZ = z
+  .object({
+    refreshToken: z.string().min(1).max(512).optional(),
+  })
+  .strict();

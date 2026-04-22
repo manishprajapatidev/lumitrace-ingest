@@ -23,6 +23,20 @@ const envSchema = z.object({
   JWT_SECRET: z.string().min(32, 'JWT_SECRET must be at least 32 chars'),
   JWT_ISSUER: z.string().min(1).default('lumitrace'),
   JWT_AUDIENCE: z.string().min(1).default('lumitrace-api'),
+  ACCESS_TOKEN_TTL_SEC: z.coerce.number().int().min(60).default(900),
+  REFRESH_TOKEN_TTL_SEC: z.coerce.number().int().min(3600).default(2_592_000),
+  AUTH_PASSWORD_MIN_LENGTH: z.coerce.number().int().min(8).max(128).default(8),
+  AUTH_RATE_IP_PER_MIN: z.coerce.number().int().min(1).default(20),
+  AUTH_RATE_EMAIL_PER_WINDOW: z.coerce.number().int().min(1).default(5),
+  AUTH_RATE_EMAIL_WINDOW_SEC: z.coerce.number().int().min(60).default(900),
+  OTP_TTL_SEC: z.coerce.number().int().min(60).default(600),
+  OTP_RESEND_COOLDOWN_SEC: z.coerce.number().int().min(1).default(60),
+  OTP_MAX_ATTEMPTS: z.coerce.number().int().min(1).default(5),
+  OTP_LOCKOUT_MIN: z.coerce.number().int().min(1).default(15),
+  AUTH_LOG_OTPS: z
+    .string()
+    .default('true')
+    .transform((v) => v === 'true' || v === '1'),
 
   CORS_ORIGINS: z
     .string()

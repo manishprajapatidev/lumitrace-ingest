@@ -12,7 +12,17 @@ export function errorHandler(
   reply: FastifyReply,
 ): void {
   if (err instanceof AppError) {
-    reply.status(err.statusCode).send({ error: err.code, message: err.message, details: err.details });
+    if (err.headers) {
+      for (const [name, value] of Object.entries(err.headers)) {
+        reply.header(name, value);
+      }
+    }
+    reply.status(err.statusCode).send({
+      error: err.code,
+      message: err.message,
+      ...(err.body ?? {}),
+      ...(err.details === undefined ? {} : { details: err.details }),
+    });
     return;
   }
   if (err instanceof ZodError) {

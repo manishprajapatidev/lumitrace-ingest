@@ -16,6 +16,33 @@ export interface ProjectRow {
   created_at: Date;
 }
 
+export interface UserRow {
+  id: string;
+  email: string;
+  password_hash: string | null;
+  is_verified: boolean;
+  created_at: Date;
+}
+
+export interface EmailOtpRow {
+  user_id: string;
+  code_hash: string;
+  expires_at: Date;
+  attempts: number;
+  last_sent_at: Date;
+  locked_until: Date | null;
+  created_at: Date;
+}
+
+export interface RefreshTokenRow {
+  id: string;
+  user_id: string;
+  token_hash: string;
+  expires_at: Date;
+  revoked_at: Date | null;
+  created_at: Date;
+}
+
 export interface SourceRow {
   id: string;
   project_id: string;
@@ -43,4 +70,6 @@ export interface LogRow {
 export interface AuthUser {
   id: string;
   email?: string;
+  isVerified?: boolean;
+  jti?: string;
 }

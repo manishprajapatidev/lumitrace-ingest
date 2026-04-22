@@ -10,6 +10,7 @@ import { config } from './config/index.js';
 import { logger } from './lib/logger.js';
 import { errorHandler } from './middleware/errorHandler.js';
 import { healthRoutes } from './routes/health.js';
+import { authRoutes } from './routes/auth.js';
 import { ingestRoutes } from './routes/ingest.js';
 import { streamRoutes } from './routes/stream.js';
 import { adminRoutes } from './routes/admin.js';
@@ -48,6 +49,7 @@ export async function buildApp() {
   });
 
   await app.register(healthRoutes);
+  await app.register(authRoutes);
   await app.register(ingestRoutes);
   await app.register(streamRoutes);
   await app.register(adminRoutes);

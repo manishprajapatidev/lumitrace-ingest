@@ -27,7 +27,11 @@ export async function requireAuth(req: FastifyRequest, _reply: FastifyReply): Pr
     if (typeof payload.sub !== 'string' || payload.sub.length === 0) {
       throw errors.unauthorized('invalid subject');
     }
-    req.user = { id: payload.sub, email: typeof payload.email === 'string' ? payload.email : undefined };
+    req.user = {
+      id: payload.sub,
+      email: typeof payload.email === 'string' ? payload.email : undefined,
+      jti: typeof payload.jti === 'string' ? payload.jti : undefined,
+    };
   } catch (err) {
     if (err instanceof Error && err.message.includes('expired')) {
       throw errors.unauthorized('token expired');
@@ -48,6 +52,7 @@ function extractBearer(req: FastifyRequest): string | null {
  * Routes that accept this MUST be GETs (idempotent) and rate-limited by user.
  */
 function extractQueryToken(req: FastifyRequest): string | null {
+  if (req.method !== 'GET') return null;
   const q = req.query as Record<string, unknown> | undefined;
   if (q && typeof q.token === 'string') return q.token;
   return null;
