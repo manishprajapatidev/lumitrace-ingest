@@ -14,6 +14,7 @@ import { authRoutes } from './routes/auth.js';
 import { ingestRoutes } from './routes/ingest.js';
 import { streamRoutes } from './routes/stream.js';
 import { adminRoutes } from './routes/admin.js';
+import { installRoutes } from './routes/install.js';
 
 export async function buildApp() {
   const app = Fastify({
@@ -53,6 +54,7 @@ export async function buildApp() {
   await app.register(ingestRoutes);
   await app.register(streamRoutes);
   await app.register(adminRoutes);
+  await app.register(installRoutes);
 
   return app;
 }

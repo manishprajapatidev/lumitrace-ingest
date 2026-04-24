@@ -55,6 +55,9 @@ const envSchema = z.object({
 
   TOKEN_BYTES: z.coerce.number().int().min(16).max(64).default(32),
   TOKEN_PREFIX: z.string().min(1).max(8).default('lt'),
+
+  // Public base URL used in install snippets and script hosting
+  PUBLIC_URL: z.string().url().default('https://lumitrace-ingest.onrender.com'),
 });
 
 export type AppConfig = Readonly<z.infer<typeof envSchema>>;
