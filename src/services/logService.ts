@@ -85,7 +85,19 @@ function topLevelString(attributes: Record<string, unknown>, key: string): strin
   return typeof value === 'string' && value.length > 0 ? value : undefined;
 }
 
+function firstTopLevelString(attributes: Record<string, unknown>, keys: string[]): string | undefined {
+  for (const key of keys) {
+    const value = topLevelString(attributes, key);
+    if (value) return value;
+  }
+  return undefined;
+}
+
 export function toApiLog(row: LogRow): ApiLog {
+  const service = firstTopLevelString(row.attributes, ['service', 'app', 'source', 'source_name']);
+  const host = firstTopLevelString(row.attributes, ['host', 'hostname', 'ip']);
+  const environment = firstTopLevelString(row.attributes, ['environment', 'env']);
+
   return {
     id: row.id,
     timestamp: row.ts.toISOString(),
@@ -95,9 +107,9 @@ export function toApiLog(row: LogRow): ApiLog {
     statusCode: row.status_code,
     attributes: row.attributes,
     raw: row.raw,
-    service: topLevelString(row.attributes, 'service'),
-    host: topLevelString(row.attributes, 'host'),
-    environment: topLevelString(row.attributes, 'environment'),
+    service,
+    host,
+    environment,
     trace_id: topLevelString(row.attributes, 'trace_id'),
     span_id: topLevelString(row.attributes, 'span_id'),
   };

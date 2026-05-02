@@ -69,7 +69,31 @@ export async function ingestRoutes(app: FastifyInstance): Promise<void> {
           rejected.push({ line: idx, reason: v.error.issues[0]?.message ?? 'invalid_schema' });
           return;
         }
-        accepted.push({ ...v.data, source_id: source.id });
+        const attrs = v.data.attributes as Record<string, unknown>;
+        const service = typeof attrs.service === 'string' && attrs.service.length > 0
+          ? attrs.service
+          : source.name;
+        const host = typeof attrs.host === 'string' && attrs.host.length > 0
+          ? attrs.host
+          : req.ip;
+        const environmentFromConfig = source.config?.environment;
+        const environment = typeof attrs.environment === 'string' && attrs.environment.length > 0
+          ? attrs.environment
+          : typeof environmentFromConfig === 'string' && environmentFromConfig.length > 0
+            ? environmentFromConfig
+            : undefined;
+
+        accepted.push({
+          ...v.data,
+          source_id: source.id,
+          attributes: {
+            ...attrs,
+            service,
+            host,
+            source_type: source.type,
+            ...(environment ? { environment } : {}),
+          },
+        });
       });
 
       if (rejected.length > 0) {
