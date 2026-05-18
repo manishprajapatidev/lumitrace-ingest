@@ -254,9 +254,14 @@ write_shipper() {
 set -euo pipefail
 
 ENV_FILE="/etc/lumitrace-agent/agent.env"
-[ -f "$ENV_FILE" ] || { echo "[shipper][error] missing $ENV_FILE" >&2; exit 1; }
-# shellcheck disable=SC1090
-source "$ENV_FILE"
+if [ -f "$ENV_FILE" ]; then
+  # shellcheck disable=SC1090
+  source "$ENV_FILE"
+fi
+# Verify critical vars are present (set either by source or by systemd EnvironmentFile)
+: "${INGEST_URL:?agent env missing INGEST_URL — re-run the install command}"
+: "${INGEST_TOKEN:?agent env missing INGEST_TOKEN — re-run the install command}"
+: "${SOURCE_TYPE:?agent env missing SOURCE_TYPE — re-run the install command}"
 
 QUEUE_FILE="$DATA_DIR/queue.ndjson"
 LOCK_FILE="$DATA_DIR/flush.lock"
@@ -630,7 +635,7 @@ Type=simple
 User=$APP_USER_DEFAULT
 Group=$APP_GROUP_DEFAULT
 ${extra_group}
-EnvironmentFile=$env_file
+EnvironmentFile=-$env_file
 ExecStart=$INSTALL_DIR_DEFAULT/shipper.sh
 Restart=always
 RestartSec=2
