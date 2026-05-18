@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERSION="1.2.0"
+VERSION="1.3.0"
 
 APP_NAME_DEFAULT="lumitrace-agent"
 APP_USER_DEFAULT="lumitrace-agent"
@@ -15,6 +15,8 @@ SOURCE_TYPE="pm2"
 INGEST_URL=""
 INGEST_TOKEN=""
 LOG_GLOB=""
+CONTAINER=""
+PARSER="plain"
 SERVICE_NAME="$APP_NAME_DEFAULT"
 HOST_TAG="$(hostname -f 2>/dev/null || hostname)"
 BATCH_LINES="200"
@@ -24,6 +26,8 @@ OUTPUT="text"
 DRY_RUN="false"
 UNINSTALL="false"
 INSTALL_DEPS="true"
+SERVICE_TAG=""
+ENVIRONMENT="production"
 
 FILE_TAIL_ENABLED="false"
 FILE_TAIL_INSTALLED="false"
@@ -43,13 +47,17 @@ Required:
   --ingest-token TOKEN
 
 Optional:
-  --source-type pm2|nginx|apache|journald|file   (default: pm2)
+  --source-type pm2|nginx|apache|journald|file|docker|laravel|mysql|postgresql   (default: pm2)
   --log-glob GLOB
+  --container NAME     Docker container name or ID (required for docker source)
+  --parser plain|json|logfmt  Log line format for file/laravel sources (default: plain)
   --service-name NAME
   --host-tag TAG
   --batch-lines N          (default: 200)
   --flush-secs N           (default: 2)
   --curl-timeout-secs N    (default: 15)
+  --service-tag NAME       service name shown in the UI (default: source type)
+  --environment ENV        production|staging|dev (default: production)
   --output text|json
   --dry-run
   --uninstall
@@ -57,10 +65,13 @@ Optional:
   --help
 
 Severity captured per source type:
-  pm2/file   FATAL|ERROR|WARN|INFO|DEBUG|TRACE via keyword scan
-  nginx      INFO (1xx-3xx) WARN (4xx) ERROR (5xx) via HTTP status
-  apache     same as nginx
-  journald   FATAL (0-2) ERROR (3) WARN (4) INFO (5-6) DEBUG (7) via PRIORITY
+  pm2/file     FATAL|ERROR|WARN|INFO|DEBUG|TRACE via keyword scan (or JSON parse with --parser json)
+  nginx/apache INFO (1xx-3xx) WARN (4xx) ERROR (5xx) via HTTP status
+  journald     FATAL (0-2) ERROR (3) WARN (4) INFO (5-6) DEBUG (7) via PRIORITY
+  docker       Auto-detected JSON (level/severity/msg fields) or keyword scan
+  laravel      Monolog JSON + plain-text format (level_name field or keyword)
+  mysql        ERROR/WARNING/NOTE/INFO keywords from MySQL error log
+  postgresql   FATAL/ERROR/WARNING/LOG/INFO keywords from PostgreSQL log
 EOF
 }
 
@@ -101,11 +112,15 @@ parse_args() {
       --ingest-url)        INGEST_URL="${2:-}"; shift 2 ;;
       --ingest-token)      INGEST_TOKEN="${2:-}"; shift 2 ;;
       --log-glob)          LOG_GLOB="${2:-}"; shift 2 ;;
+      --container)         CONTAINER="${2:-}"; shift 2 ;;
+      --parser)            PARSER="${2:-plain}"; shift 2 ;;
       --service-name)      SERVICE_NAME="${2:-}"; shift 2 ;;
       --host-tag)          HOST_TAG="${2:-}"; shift 2 ;;
       --batch-lines)       BATCH_LINES="${2:-}"; shift 2 ;;
       --flush-secs)        FLUSH_SECS="${2:-}"; shift 2 ;;
       --curl-timeout-secs) CURL_TIMEOUT_SECS="${2:-}"; shift 2 ;;
+      --service-tag)       SERVICE_TAG="${2:-}"; shift 2 ;;
+      --environment)       ENVIRONMENT="${2:-}"; shift 2 ;;
       --output)            OUTPUT="${2:-}"; shift 2 ;;
       --dry-run)           DRY_RUN="true"; shift 1 ;;
       --uninstall)         UNINSTALL="true"; shift 1 ;;
@@ -118,12 +133,17 @@ parse_args() {
 
 set_source_defaults() {
   case "$SOURCE_TYPE" in
-    pm2)      [ -z "$LOG_GLOB" ] && LOG_GLOB="/home/ubuntu/.pm2/logs/*.log" ;;
-    nginx)    [ -z "$LOG_GLOB" ] && LOG_GLOB="/var/log/nginx/*.log" ;;
-    apache)   [ -z "$LOG_GLOB" ] && LOG_GLOB="$(detect_apache_log_glob)" ;;
-    journald) LOG_GLOB="" ;;
-    file)     : ;;
+    pm2)        [ -z "$LOG_GLOB" ] && LOG_GLOB="/home/ubuntu/.pm2/logs/*.log" ;;
+    nginx)      [ -z "$LOG_GLOB" ] && LOG_GLOB="/var/log/nginx/*.log" ;;
+    apache)     [ -z "$LOG_GLOB" ] && LOG_GLOB="$(detect_apache_log_glob)" ;;
+    journald)   LOG_GLOB="" ;;
+    file)       : ;;
+    docker)     LOG_GLOB="" ;;  # uses docker logs, not file tail
+    laravel)    [ -z "$LOG_GLOB" ] && LOG_GLOB="/var/www/html/storage/logs/*.log"; PARSER="json" ;;
+    mysql)      [ -z "$LOG_GLOB" ] && LOG_GLOB="/var/log/mysql/error.log" ;;
+    postgresql) [ -z "$LOG_GLOB" ] && LOG_GLOB="/var/log/postgresql/*.log" ;;
   esac
+  [ -z "$SERVICE_TAG" ] && SERVICE_TAG="$SOURCE_TYPE"
 }
 
 validate_inputs() {
@@ -132,10 +152,12 @@ validate_inputs() {
     *) json_error_and_exit "INVALID_MODE" "--mode must be: file-tail, http-push, or both" ;;
   esac
   case "$SOURCE_TYPE" in
-    pm2|nginx|apache|journald|file) ;;
-    *) json_error_and_exit "INVALID_SOURCE_TYPE" "--source-type must be: pm2, nginx, apache, journald, file" ;;
+    pm2|nginx|apache|journald|file|docker|laravel|mysql|postgresql) ;;
+    *) json_error_and_exit "INVALID_SOURCE_TYPE" "--source-type must be: pm2, nginx, apache, journald, file, docker, laravel, mysql, postgresql" ;;
   esac
+  case "$PARSER" in plain|json|logfmt) ;; *) json_error_and_exit "INVALID_PARSER" "--parser must be: plain, json, or logfmt" ;; esac
   case "$OUTPUT" in text|json) ;; *) json_error_and_exit "INVALID_OUTPUT" "--output must be text or json" ;; esac
+  case "$ENVIRONMENT" in production|staging|dev) ;; *) json_error_and_exit "INVALID_ENV" "--environment must be: production, staging, or dev" ;; esac
   [ -z "$INGEST_URL" ]   && json_error_and_exit "MISSING_REQUIRED" "--ingest-url is required"
   [ -z "$INGEST_TOKEN" ] && json_error_and_exit "MISSING_REQUIRED" "--ingest-token is required"
   case "$INGEST_URL" in
@@ -145,6 +167,9 @@ validate_inputs() {
   if [ "$MODE" != "http-push" ]; then
     if [ "$SOURCE_TYPE" = "file" ] && [ -z "$LOG_GLOB" ]; then
       json_error_and_exit "MISSING_LOG_GLOB" "--log-glob is required when --source-type file"
+    fi
+    if [ "$SOURCE_TYPE" = "docker" ] && [ -z "$CONTAINER" ]; then
+      json_error_and_exit "MISSING_CONTAINER" "--container is required when --source-type docker"
     fi
     is_root || json_error_and_exit "NEED_ROOT" "Run as root or with sudo"
   fi
@@ -206,7 +231,11 @@ INGEST_URL="$INGEST_URL"
 INGEST_TOKEN="$INGEST_TOKEN"
 SOURCE_TYPE="$SOURCE_TYPE"
 LOG_GLOB="$LOG_GLOB"
+CONTAINER="$CONTAINER"
+PARSER="$PARSER"
 HOST_TAG="$HOST_TAG"
+SERVICE_TAG="$SERVICE_TAG"
+ENVIRONMENT="$ENVIRONMENT"
 BATCH_LINES="$BATCH_LINES"
 FLUSH_SECS="$FLUSH_SECS"
 CURL_TIMEOUT_SECS="$CURL_TIMEOUT_SECS"
@@ -236,23 +265,23 @@ touch "$QUEUE_FILE"
 
 slog() { printf '[shipper] %s\n' "$*" >&2; }
 
-# ── severity helpers ─────────────────────────────────────────────────────────
+# ── severity helpers ──────────────────────────────────────────────────────────
 
-# Keyword scan for unstructured lines (pm2, generic file)
+# Keyword scan — covers pm2, bare file, Laravel plain text, MySQL, PostgreSQL
 text_to_severity() {
   local line_lower
   line_lower="$(echo "$1" | tr '[:upper:]' '[:lower:]')"
   case "$line_lower" in
-    *fatal*)                      echo "FATAL" ;;
-    *error*|*exception*|*panic*)  echo "ERROR" ;;
-    *warn*|*warning*)             echo "WARN"  ;;
-    *debug*)                      echo "DEBUG" ;;
-    *trace*|*verbose*)            echo "TRACE" ;;
-    *)                            echo "INFO"  ;;
+    *fatal*|*critical*|*emergency*|*alert*|*panic*) echo "FATAL" ;;
+    *error*|*exception*|*stderr*)                    echo "ERROR" ;;
+    *warn*|*warning*)                                echo "WARN"  ;;
+    *debug*)                                         echo "DEBUG" ;;
+    *trace*|*verbose*)                               echo "TRACE" ;;
+    *)                                               echo "INFO"  ;;
   esac
 }
 
-# HTTP status code → severity (nginx / apache combined log format)
+# HTTP status → severity (nginx / apache combined log format)
 http_status_to_severity() {
   local code="${1:-0}"
   if [[ "$code" =~ ^[0-9]+$ ]]; then
@@ -277,12 +306,142 @@ journald_priority_to_severity() {
   esac
 }
 
-# ── line formatters ──────────────────────────────────────────────────────────
+# JSON/numeric level → severity
+# Handles: pino/bunyan numbers (10/20/30/40/50/60),
+#          Monolog numbers (100/200/300/400/500/600),
+#          string labels from winston/logrus/zerolog/structlog
+parse_json_level() {
+  local raw_level="$1"
+  case "$(echo "$raw_level" | tr '[:upper:]' '[:lower:]')" in
+    fatal|critical|emergency|alert)  echo "FATAL" ; return ;;
+    error)                           echo "ERROR" ; return ;;
+    warn|warning)                    echo "WARN"  ; return ;;
+    info)                            echo "INFO"  ; return ;;
+    debug)                           echo "DEBUG" ; return ;;
+    trace|verbose)                   echo "TRACE" ; return ;;
+  esac
+  # Numeric: pino/bunyan (10-60) and Monolog (100-600)
+  if [[ "$raw_level" =~ ^[0-9]+$ ]]; then
+    local n="$raw_level"
+    if   [ "$n" -ge 550 ]; then echo "FATAL"
+    elif [ "$n" -ge 400 ] || [ "$n" -eq 60 ]; then echo "ERROR"
+    elif [ "$n" -ge 300 ] || [ "$n" -eq 40 ]; then echo "WARN"
+    elif [ "$n" -ge 200 ] || [ "$n" -eq 30 ]; then echo "INFO"
+    elif [ "$n" -ge 100 ] || [ "$n" -eq 20 ]; then echo "DEBUG"
+    else echo "TRACE"
+    fi
+    return
+  fi
+  echo ""  # unknown — caller falls back to keyword scan
+}
+
+# ── structured log parsers ────────────────────────────────────────────────────
+
+# Parse a JSON log line. Covers:
+#   pino/bunyan  {"level":30,"time":1234567890,"msg":"hello"}
+#   winston      {"level":"info","message":"hello","timestamp":"..."}
+#   logrus/zerolog {"level":"error","msg":"hello","time":"..."}
+#   structlog    {"event":"hello","level":"info","timestamp":"..."}
+#   Monolog      {"message":"hello","level_name":"ERROR","datetime":"..."}
+#   Docker       {"log":"hello\n","stream":"stdout","time":"..."}
+json_line_structured() {
+  local raw="$1"
+
+  # Extract message — try each common field name in priority order
+  local msg
+  msg="$(echo "$raw" | jq -r '.message // .msg // .event // .log // empty' 2>/dev/null || true)"
+  [ -z "$msg" ] && return 0
+  msg="${msg%$'\n'}"  # strip trailing newline (Docker json-file driver)
+
+  # Extract level — level_name (Monolog), level, severity, lvl
+  local level_raw sev
+  level_raw="$(echo "$raw" | jq -r '.level_name // .level // .severity // .lvl // empty' 2>/dev/null || true)"
+  sev="$(parse_json_level "$level_raw")"
+  # Fall back to keyword scan on the message text if level unrecognised
+  [ -z "$sev" ] && sev="$(text_to_severity "$msg")"
+
+  # Extract timestamp — try each common field; fall back to now
+  local ts
+  ts="$(echo "$raw" | jq -r '.time // .timestamp // .datetime // .ts // empty' 2>/dev/null || true)"
+  # pino/bunyan emit time as epoch ms — convert if purely numeric
+  if [[ "$ts" =~ ^[0-9]{10,}$ ]]; then
+    ts="$(date -u -d "@$((ts / 1000))" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u +%Y-%m-%dT%H:%M:%SZ)"
+  fi
+  [ -z "$ts" ] && ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+  # Extract optional service name embedded in the JSON
+  local svc
+  svc="$(echo "$raw" | jq -r '.name // .service // .app // .logger // empty' 2>/dev/null || true)"
+  [ -z "$svc" ] && svc="${SERVICE_TAG:-unknown}"
+
+  jq -cn \
+    --arg ts   "$ts" \
+    --arg sev  "$sev" \
+    --arg msg  "$msg" \
+    --arg host "${HOST_TAG:-unknown}" \
+    --arg src  "${SOURCE_TYPE:-file}" \
+    --arg svc  "$svc" \
+    --arg env  "${ENVIRONMENT:-production}" \
+    --arg raw  "$raw" \
+    '{ts:$ts,severity:$sev,message:$msg,raw:$raw,attributes:{host:$host,source_type:$src,service:$svc,environment:$env}}'
+}
+
+# Parse logfmt key=value lines:
+#   level=info msg="hello world" ts=2024-01-01T00:00:00Z
+json_line_logfmt() {
+  local raw="$1"
+  local ts sev msg
+
+  # Extract key=value or key="value" pairs with awk
+  msg="$(echo "$raw"  | awk '{for(i=1;i<=NF;i++){if($i~/^msg=|^message=/){sub(/^[^=]+=[""]?/,"",$i);gsub(/[""]$/,"",$i);print $i;exit}}}')"
+  [ -z "$msg" ] && msg="$raw"
+
+  local level_raw
+  level_raw="$(echo "$raw" | awk '{for(i=1;i<=NF;i++){if($i~/^level=|^severity=|^lvl=/){sub(/^[^=]+=[""]?/,"",$i);gsub(/[""]$/,"",$i);print $i;exit}}}')"
+  sev="$(parse_json_level "$level_raw")"
+  [ -z "$sev" ] && sev="$(text_to_severity "$msg")"
+
+  ts="$(echo "$raw" | awk '{for(i=1;i<=NF;i++){if($i~/^ts=|^time=|^timestamp=/){sub(/^[^=]+=[""]?/,"",$i);gsub(/[""]$/,"",$i);print $i;exit}}}')"
+  [ -z "$ts" ] && ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+  jq -cn \
+    --arg ts   "$ts" \
+    --arg sev  "$sev" \
+    --arg msg  "$msg" \
+    --arg host "${HOST_TAG:-unknown}" \
+    --arg src  "${SOURCE_TYPE:-file}" \
+    --arg svc  "${SERVICE_TAG:-unknown}" \
+    --arg env  "${ENVIRONMENT:-production}" \
+    --arg raw  "$raw" \
+    '{ts:$ts,severity:$sev,message:$msg,raw:$raw,attributes:{host:$host,source_type:$src,service:$svc,environment:$env}}'
+}
+
+# ── line formatters ───────────────────────────────────────────────────────────
 
 json_line_file() {
   local raw="$1"
   local ts sev sc_arg=""
   ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+  # JSON parser: explicit --parser json, laravel (always JSON/Monolog), or
+  # docker (json-file log driver), or auto-detect JSON objects
+  local effective_parser="${PARSER:-plain}"
+  if [ "$SOURCE_TYPE" = "docker" ] || [ "$SOURCE_TYPE" = "laravel" ]; then
+    effective_parser="json"
+  fi
+
+  if [ "$effective_parser" = "json" ] || [[ "$raw" =~ ^\{ ]]; then
+    local result
+    result="$(json_line_structured "$raw" 2>/dev/null || true)"
+    [ -n "$result" ] && { echo "$result"; return; }
+    # Fall through to keyword scan if JSON parsing fails
+  fi
+
+  if [ "$effective_parser" = "logfmt" ]; then
+    local result
+    result="$(json_line_logfmt "$raw" 2>/dev/null || true)"
+    [ -n "$result" ] && { echo "$result"; return; }
+  fi
 
   case "$SOURCE_TYPE" in
     nginx|apache)
@@ -290,6 +449,18 @@ json_line_file() {
       sc="$(echo "$raw" | awk '{print $9}')"
       sev="$(http_status_to_severity "$sc")"
       [[ "$sc" =~ ^[0-9]+$ ]] && sc_arg="$sc"
+      ;;
+    mysql)
+      # MySQL error log: "2024-01-15T10:30:00Z 0 [ERROR] ..."
+      sev="$(echo "$raw" | grep -oP '\[(ERROR|WARNING|NOTE|SYSTEM|INFO)\]' | tr -d '[]' || true)"
+      [ -z "$sev" ] && sev="$(text_to_severity "$raw")"
+      ;;
+    postgresql)
+      # PostgreSQL: "2024-01-15 10:30:00 UTC [1234]: user@db FATAL:  ..."
+      sev="$(echo "$raw" | grep -oP '(?<=: \w{1,20} )(FATAL|PANIC|ERROR|WARNING|LOG|INFO|DETAIL|NOTICE)' || true)"
+      [ -z "$sev" ] && sev="$(text_to_severity "$raw")"
+      # Normalise PostgreSQL labels
+      case "$sev" in PANIC) sev="FATAL" ;; LOG|NOTICE|DETAIL) sev="INFO" ;; esac
       ;;
     *)
       sev="$(text_to_severity "$raw")"
@@ -303,8 +474,10 @@ json_line_file() {
       --arg  msg  "$raw" \
       --arg  host "${HOST_TAG:-unknown}" \
       --arg  src  "${SOURCE_TYPE:-file}" \
+      --arg  svc  "${SERVICE_TAG:-unknown}" \
+      --arg  env  "${ENVIRONMENT:-production}" \
       --argjson sc "$sc_arg" \
-      '{ts:$ts,severity:$sev,message:$msg,status_code:$sc,attributes:{host:$host,source_type:$src}}'
+      '{ts:$ts,severity:$sev,message:$msg,status_code:$sc,attributes:{host:$host,source_type:$src,service:$svc,environment:$env}}'
   else
     jq -cn \
       --arg ts  "$ts" \
@@ -312,7 +485,9 @@ json_line_file() {
       --arg msg "$raw" \
       --arg host "${HOST_TAG:-unknown}" \
       --arg src  "${SOURCE_TYPE:-file}" \
-      '{ts:$ts,severity:$sev,message:$msg,attributes:{host:$host,source_type:$src}}'
+      --arg svc  "${SERVICE_TAG:-unknown}" \
+      --arg env  "${ENVIRONMENT:-production}" \
+      '{ts:$ts,severity:$sev,message:$msg,attributes:{host:$host,source_type:$src,service:$svc,environment:$env}}'
   fi
 }
 
@@ -323,9 +498,9 @@ json_line_journald() {
   msg="$(echo "$raw" | jq -r '.MESSAGE // empty' 2>/dev/null || true)"
   [ -z "$msg" ] && return 0
 
-  priority="$(echo "$raw" | jq -r '.PRIORITY // "6"'                          2>/dev/null || echo "6")"
-  ts_us="$(   echo "$raw" | jq -r '.__REALTIME_TIMESTAMP // ""'                2>/dev/null || true)"
-  svc="$(     echo "$raw" | jq -r '.SYSLOG_IDENTIFIER // ._SYSTEMD_UNIT // ""' 2>/dev/null || true)"
+  priority="$(echo "$raw" | jq -r '.PRIORITY // "6"'                           2>/dev/null || echo "6")"
+  ts_us="$(   echo "$raw" | jq -r '.__REALTIME_TIMESTAMP // ""'                 2>/dev/null || true)"
+  svc="$(     echo "$raw" | jq -r '.SYSLOG_IDENTIFIER // ._SYSTEMD_UNIT // ""'  2>/dev/null || true)"
 
   if [ -n "$ts_us" ] && [[ "$ts_us" =~ ^[0-9]+$ ]]; then
     ts="$(date -u -d "@$((ts_us / 1000000))" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -341,10 +516,11 @@ json_line_journald() {
     --arg msg  "$msg" \
     --arg host "${HOST_TAG:-unknown}" \
     --arg svc  "$svc" \
-    '{ts:$ts,severity:$sev,message:$msg,attributes:{host:$host,source_type:"journald",service:$svc}}'
+    --arg env  "${ENVIRONMENT:-production}" \
+    '{ts:$ts,severity:$sev,message:$msg,attributes:{host:$host,source_type:"journald",service:$svc,environment:$env}}'
 }
 
-# ── flush ────────────────────────────────────────────────────────────────────
+# ── flush ─────────────────────────────────────────────────────────────────────
 
 flush_queue() {
   (
@@ -382,16 +558,16 @@ periodic_flusher() {
 cleanup() { flush_queue || true; }
 trap cleanup EXIT INT TERM
 
-# ── main dispatch ────────────────────────────────────────────────────────────
+# ── main dispatch ─────────────────────────────────────────────────────────────
 
 periodic_flusher &
 
-if [ "$SOURCE_TYPE" = "journald" ]; then
-  slog "Starting journald tail (journalctl -f -o json -n 0)"
-  line_count=0
-
-  journalctl -f -o json -n 0 | while IFS= read -r line; do
-    result="$(json_line_journald "$line")" || continue
+process_lines() {
+  local line_count=0
+  while IFS= read -r line; do
+    [ -z "$line" ] && continue
+    local result
+    result="$("$1" "$line")" || continue
     [ -z "$result" ] && continue
     printf '%s\n' "$result" >> "$QUEUE_FILE"
     line_count=$((line_count + 1))
@@ -400,6 +576,18 @@ if [ "$SOURCE_TYPE" = "journald" ]; then
       line_count=0
     fi
   done
+}
+
+if [ "$SOURCE_TYPE" = "journald" ]; then
+  slog "Starting journald tail (journalctl -f -o json -n 0)"
+  journalctl -f -o json -n 0 | process_lines json_line_journald
+
+elif [ "$SOURCE_TYPE" = "docker" ]; then
+  CONTAINER="${CONTAINER:-}"
+  [ -z "$CONTAINER" ] && { echo "[shipper][error] CONTAINER is not set" >&2; exit 1; }
+  slog "Following Docker container: $CONTAINER"
+  # --timestamps adds RFC3339 timestamp prefix; shipper strips it and uses JSON time field
+  docker logs --follow --timestamps "$CONTAINER" 2>&1 | process_lines json_line_file
 
 else
   tail_log_files() {
@@ -410,23 +598,13 @@ else
         sleep 5
         continue
       fi
-      slog "Tailing ${#files[@]} file(s) [source-type=$SOURCE_TYPE]..."
+      slog "Tailing ${#files[@]} file(s) [source-type=$SOURCE_TYPE parser=${PARSER:-plain}]..."
       tail -n0 -F "${files[@]}" || true
       sleep 1
     done
   }
 
-  line_count=0
-  tail_log_files | while IFS= read -r line; do
-    result="$(json_line_file "$line")" || continue
-    [ -z "$result" ] && continue
-    printf '%s\n' "$result" >> "$QUEUE_FILE"
-    line_count=$((line_count + 1))
-    if [ "$line_count" -ge "${BATCH_LINES:-200}" ]; then
-      flush_queue || true
-      line_count=0
-    fi
-  done
+  tail_log_files | process_lines json_line_file
 fi
 SHIPPER
 
@@ -439,6 +617,7 @@ write_service() {
   local service_file="/etc/systemd/system/${SERVICE_NAME}.service"
   local extra_group=""
   [ "$SOURCE_TYPE" = "journald" ] && extra_group="SupplementaryGroups=systemd-journal"
+  [ "$SOURCE_TYPE" = "docker" ]   && extra_group="SupplementaryGroups=docker"
 
   cat > "$service_file" <<EOF
 [Unit]

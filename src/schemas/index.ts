@@ -9,7 +9,7 @@ export const SeverityZ = z
   .trim()
   .transform((value) => value.toUpperCase())
   .pipe(SeverityLiteralZ);
-export const SourceTypeZ = z.enum(['pm2', 'nginx', 'apache', 'journald', 'file', 'http']);
+export const SourceTypeZ = z.enum(['pm2', 'nginx', 'apache', 'journald', 'file', 'http', 'docker', 'laravel', 'mysql', 'postgresql', 'syslog']);
 export const EnvironmentZ = z.enum(['production', 'staging', 'dev']);
 
 export const CreateProjectZ = z.object({
@@ -79,6 +79,69 @@ export const GlobalLogsQueryZ = z.object({
   sev: z.union([SeverityZ, z.array(SeverityZ)]).optional(),
   sourceId: z.union([z.string().uuid(), z.array(z.string().uuid())]).optional(),
   limit: z.coerce.number().int().min(1).max(1000).default(200),
+  cursor: z.string().max(64).optional(),
+});
+
+// ── Alert schemas ──────────────────────────────────────────────────────────
+
+export const AlertConditionTypeZ = z.enum(['keyword', 'threshold', 'error_rate']);
+export const NotifTypeZ = z.enum(['webhook', 'slack', 'email']);
+
+const KeywordConditionZ = z.object({
+  keyword: z.string().min(1).max(200),
+  severities: z.array(z.enum(['FATAL', 'ERROR', 'WARN', 'INFO', 'DEBUG', 'TRACE'])).optional(),
+});
+const ThresholdConditionZ = z.object({
+  count: z.number().int().min(1),
+  window_sec: z.number().int().min(60).max(86400),
+  severities: z.array(z.enum(['FATAL', 'ERROR', 'WARN', 'INFO', 'DEBUG', 'TRACE'])).optional(),
+});
+const ErrorRateConditionZ = z.object({
+  rate: z.number().min(0).max(1),
+  window_sec: z.number().int().min(60).max(86400),
+});
+
+export const CreateAlertRuleZ = z.object({
+  name: z.string().trim().min(1).max(120),
+  description: z.string().max(2000).default(''),
+  enabled: z.boolean().default(true),
+  condition_type: AlertConditionTypeZ,
+  condition: z.union([KeywordConditionZ, ThresholdConditionZ, ErrorRateConditionZ]),
+  project_id: z.string().uuid().optional(),
+  source_ids: z.array(z.string().uuid()).default([]),
+  notif_type: NotifTypeZ,
+  notif_config: z.record(z.string(), z.unknown()).default({}),
+  cooldown_sec: z.number().int().min(60).default(300),
+}).strict();
+
+export const UpdateAlertRuleZ = z.object({
+  name: z.string().trim().min(1).max(120).optional(),
+  description: z.string().max(2000).optional(),
+  enabled: z.boolean().optional(),
+  condition_type: AlertConditionTypeZ.optional(),
+  condition: z.union([KeywordConditionZ, ThresholdConditionZ, ErrorRateConditionZ]).optional(),
+  project_id: z.string().uuid().nullable().optional(),
+  source_ids: z.array(z.string().uuid()).optional(),
+  notif_type: NotifTypeZ.optional(),
+  notif_config: z.record(z.string(), z.unknown()).optional(),
+  cooldown_sec: z.number().int().min(60).optional(),
+}).strict();
+
+export const UpdateSettingsZ = z.object({
+  retention_days: z.number().int().min(1).max(3650).optional(),
+  timezone: z.string().min(1).max(64).optional(),
+}).strict();
+
+export const StatsQueryZ = z.object({
+  project_id: z.string().uuid().optional(),
+  source_ids: z.union([z.string().uuid(), z.array(z.string().uuid())]).optional(),
+  from: z.coerce.number().int().optional(),
+  to: z.coerce.number().int().optional(),
+  limit: z.coerce.number().int().min(1).max(500).default(100),
+});
+
+export const AlertEventsQueryZ = z.object({
+  limit: z.coerce.number().int().min(1).max(200).default(50),
   cursor: z.string().max(64).optional(),
 });
 

@@ -53,6 +53,8 @@ function buildInstallCommand(
   const args = [
     `--mode ${mode}`,
     `--source-type ${sourceTypeArg}`,
+    `--service-tag "${source.name}"`,
+    `--environment "${source.project_environment}"`,
     `--ingest-url "${ingestUrl}"`,
     `--ingest-token "<YOUR_SOURCE_TOKEN>"`,
   ];
@@ -71,7 +73,7 @@ function buildCurlExample(ingestUrl: string): string {
     `curl -X POST '${ingestUrl}' \\\n` +
     `  -H 'Authorization: Bearer <YOUR_SOURCE_TOKEN>' \\\n` +
     `  -H 'Content-Type: application/x-ndjson' \\\n` +
-    `  --data-binary $'{"severity":"INFO","message":"hello"}\\n'`
+    `  --data-binary $'{"severity":"INFO","message":"hello","attributes":{"service":"my-app","environment":"production","host":"my-server"}}\\n'`
   );
 }
 

@@ -129,8 +129,11 @@ export async function fetchHistory(q: HistoryQuery): Promise<HistoryResult> {
     params.push(q.to);
   }
   if (q.q) {
-    where.push(`message ILIKE $${i++}`);
-    params.push(`%${q.q}%`);
+    const attrClause = buildSearchClause(q.q, params, i, '');
+    if (attrClause.sql) {
+      where.push(attrClause.sql);
+      i = attrClause.nextIdx;
+    }
   }
   if (q.severities && q.severities.length > 0) {
     where.push(`severity = ANY($${i++}::text[])`);
@@ -173,8 +176,11 @@ export async function fetchOwnedHistory(q: OwnedHistoryQuery): Promise<HistoryRe
     params.push(q.to);
   }
   if (q.q) {
-    where.push(`l.message ILIKE $${i++}`);
-    params.push(`%${q.q}%`);
+    const attrClause = buildSearchClause(q.q, params, i, 'l.');
+    if (attrClause.sql) {
+      where.push(attrClause.sql);
+      i = attrClause.nextIdx;
+    }
   }
   if (q.severities && q.severities.length > 0) {
     where.push(`l.severity = ANY($${i++}::text[])`);
@@ -207,6 +213,56 @@ function toHistoryResult(rows: LogRow[], limit: number): HistoryResult {
   const last = sliced[sliced.length - 1];
   const nextCursor = hasMore && last ? makeCursor(last.ts, last.id) : undefined;
   return { logs: sliced.map(toApiLog), nextCursor };
+}
+
+/**
+ * Parses an optional `key:value` attribute search alongside free-text.
+ *
+ * Syntax accepted in `q`:
+ *   - `foo bar`           → message ILIKE '%foo bar%'
+ *   - `service:api`       → attributes->>'service' = 'api'
+ *   - `status_code:500`   → attributes->>'status_code' = '500'
+ *   - `env:prod errors`   → attribute match AND message ILIKE '%errors%'
+ *
+ * Multiple key:value pairs may appear and are ANDed together.
+ * All parameters are bound — no SQL injection risk.
+ */
+function buildSearchClause(
+  rawQ: string,
+  params: unknown[],
+  startIdx: number,
+  tablePrefix: string,
+): { sql: string; nextIdx: number } {
+  const parts = rawQ.trim().split(/\s+/);
+  const clauses: string[] = [];
+  const freeWords: string[] = [];
+  let i = startIdx;
+
+  for (const part of parts) {
+    const colonAt = part.indexOf(':');
+    if (colonAt > 0) {
+      const key = part.slice(0, colonAt);
+      const val = part.slice(colonAt + 1);
+      // Allowlist of safe attribute key characters (no SQL injection vector
+      // even unparameterized, but we restrict anyway).
+      if (/^[a-z_][a-z0-9_.]{0,60}$/i.test(key) && val.length > 0) {
+        clauses.push(`${tablePrefix}attributes->>'${key}' ILIKE $${i++}`);
+        params.push(`%${val}%`);
+        continue;
+      }
+    }
+    freeWords.push(part);
+  }
+
+  if (freeWords.length > 0) {
+    clauses.push(`${tablePrefix}message ILIKE $${i++}`);
+    params.push(`%${freeWords.join(' ')}%`);
+  }
+
+  return {
+    sql: clauses.length > 0 ? `(${clauses.join(' AND ')})` : '',
+    nextIdx: i,
+  };
 }
 
 function makeCursor(ts: Date, id: string): string {

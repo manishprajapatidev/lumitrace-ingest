@@ -58,6 +58,15 @@ const envSchema = z.object({
 
   // Public base URL used in install snippets and script hosting
   PUBLIC_URL: z.string().url().default('https://lumitrace-ingest.onrender.com'),
+
+  // Syslog UDP receiver (RFC 3164 / RFC 5424). 0 = disabled.
+  SYSLOG_UDP_PORT: z.coerce.number().int().min(0).max(65535).default(0),
+  SYSLOG_UDP_HOST: z.string().default('0.0.0.0'),
+
+  // Alert evaluator — how often the background job runs (seconds).
+  ALERT_EVAL_INTERVAL_SEC: z.coerce.number().int().min(10).default(60),
+  // Timeout for outbound webhook/slack delivery (ms).
+  WEBHOOK_TIMEOUT_MS: z.coerce.number().int().min(1000).default(10_000),
 });
 
 export type AppConfig = Readonly<z.infer<typeof envSchema>>;

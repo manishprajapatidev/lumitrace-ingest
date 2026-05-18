@@ -15,6 +15,11 @@ import { ingestRoutes } from './routes/ingest.js';
 import { streamRoutes } from './routes/stream.js';
 import { adminRoutes } from './routes/admin.js';
 import { installRoutes } from './routes/install.js';
+import { alertRoutes } from './routes/alerts.js';
+import { statsRoutes } from './routes/stats.js';
+import { settingsRoutes } from './routes/settings.js';
+import { startAlertEvaluator } from './services/alertService.js';
+import { startSyslogReceiver } from './services/syslogService.js';
 
 export async function buildApp() {
   const app = Fastify({
@@ -55,6 +60,15 @@ export async function buildApp() {
   await app.register(streamRoutes);
   await app.register(adminRoutes);
   await app.register(installRoutes);
+  await app.register(alertRoutes);
+  await app.register(statsRoutes);
+  await app.register(settingsRoutes);
+
+  // Background services — only start once the server is ready to accept connections.
+  app.addHook('onReady', () => {
+    startAlertEvaluator();
+    startSyslogReceiver();
+  });
 
   return app;
 }
