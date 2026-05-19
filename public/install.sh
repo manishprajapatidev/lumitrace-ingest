@@ -645,29 +645,29 @@ else
   }
 
   # Multiline aggregator for Node.js stack traces.
-  # Continuation lines (starting with whitespace+"at " or whitespace+at the
-  # very least just whitespace) are appended to the previous line's message.
+  # Continuation lines (starting with whitespace + "at ") are appended to
+  # the previous line so full stack traces arrive as a single event.
   aggregate_multiline() {
     local buf="" buf_file=""
-    local flush_buf() {
-      [ -z "$buf" ] && return
-      printf '%s%s%s\n' "$buf_file" "$SEP" "$buf"
-      buf=""; buf_file=""
-    }
     while IFS= read -r line; do
-      # Extract file prefix (everything before first TAB)
       local file="${line%%$SEP*}"
       local content="${line#*$SEP}"
-      # Continuation: indented line (stack trace "    at ..." or "      ...")
-      if [[ "$content" =~ ^[[:space:]]+(at |[A-Z]|[a-z]) ]] && [ -n "$buf" ]; then
+      # Continuation: indented "    at ..." stack frame line
+      if [[ "$content" =~ ^[[:space:]]+at[[:space:]] ]] && [ -n "$buf" ]; then
         buf="${buf}\n${content}"
       else
-        flush_buf
+        # Flush previous buffered event
+        if [ -n "$buf" ]; then
+          printf '%s%s%s\n' "$buf_file" "$SEP" "$buf"
+        fi
         buf="$content"
         buf_file="$file"
       fi
     done
-    flush_buf
+    # Flush final event
+    if [ -n "$buf" ]; then
+      printf '%s%s%s\n' "$buf_file" "$SEP" "$buf"
+    fi
   }
 
   # Strip the TAB-prefixed filename, parse the log line, attach file attributes
