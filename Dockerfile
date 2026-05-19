@@ -5,6 +5,7 @@ COPY package.json package-lock.json* ./
 RUN npm ci --no-audit --no-fund
 COPY tsconfig.json ./
 COPY src ./src
+COPY scripts ./scripts
 COPY public ./public
 RUN npm run build && npm prune --omit=dev
 
@@ -18,7 +19,8 @@ COPY --from=builder --chown=app:root /app/node_modules ./node_modules
 COPY --from=builder --chown=app:root /app/dist ./dist
 COPY --from=builder --chown=app:root /app/public ./public
 COPY --from=builder --chown=app:root /app/package.json ./package.json
+COPY --chown=app:root migrations ./migrations
 EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=3s --retries=3 \
   CMD node -e "fetch('http://127.0.0.1:8080/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
-CMD ["node", "dist/server.js"]
+CMD ["sh", "-c", "node dist/migrate.js && node dist/server.js"]
