@@ -9,7 +9,7 @@ export const SeverityZ = z
   .trim()
   .transform((value) => value.toUpperCase())
   .pipe(SeverityLiteralZ);
-export const SourceTypeZ = z.enum(['pm2', 'nginx', 'apache', 'journald', 'file', 'http', 'docker', 'laravel', 'mysql', 'postgresql', 'syslog']);
+export const SourceTypeZ = z.enum(['nodejs', 'php', 'python', 'pm2', 'nginx', 'apache', 'journald', 'file', 'http', 'docker', 'laravel', 'mysql', 'postgresql', 'syslog']);
 export const EnvironmentZ = z.enum(['production', 'staging', 'dev']);
 
 export const CreateProjectZ = z.object({
