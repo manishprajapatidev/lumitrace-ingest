@@ -635,7 +635,11 @@ else
       # "<filepath><TAB>" so we can recover the source filename downstream.
       local pids=()
       for f in "${files[@]}"; do
-        tail -n0 -F "$f" 2>/dev/null | awk -v f="$f" -v OFS='\t' '{print f, $0}' &
+        # Strip ANSI escape codes (PM2 writes colorized output to log files)
+        # then prefix each line with the filepath so we know which file it came from
+        tail -n0 -F "$f" 2>/dev/null \
+          | sed 's/\x1b\[[0-9;]*[mGKHF]//g' \
+          | awk -v f="$f" 'BEGIN{OFS="\t"} {print f, $0}' &
         pids+=($!)
       done
       wait "${pids[0]}" 2>/dev/null || true
@@ -644,19 +648,21 @@ else
     done
   }
 
-  # Multiline aggregator for Node.js stack traces.
-  # Continuation lines (starting with whitespace + "at ") are appended to
-  # the previous line so full stack traces arrive as a single event.
+  # Multiline aggregator: joins continuation lines onto the previous event.
+  # A continuation line is any line that starts with whitespace — this covers:
+  #   - Stack trace frames:  "    at Object.<anonymous> (app.js:10:5)"
+  #   - JSON error props:    "  \"message\": \"Token expired\","
+  #   - JSON closing braces: "}"
+  # A new top-level event resets the buffer.
   aggregate_multiline() {
     local buf="" buf_file=""
     while IFS= read -r line; do
       local file="${line%%$SEP*}"
       local content="${line#*$SEP}"
-      # Continuation: indented "    at ..." stack frame line
-      if [[ "$content" =~ ^[[:space:]]+at[[:space:]] ]] && [ -n "$buf" ]; then
+      # Continuation: line starts with whitespace (indent) OR is a bare "}" or "]"
+      if { [[ "$content" =~ ^[[:space:]] ]] || [[ "$content" =~ ^[}\]] ]]; } && [ -n "$buf" ]; then
         buf="${buf}\n${content}"
       else
-        # Flush previous buffered event
         if [ -n "$buf" ]; then
           printf '%s%s%s\n' "$buf_file" "$SEP" "$buf"
         fi
@@ -664,7 +670,6 @@ else
         buf_file="$file"
       fi
     done
-    # Flush final event
     if [ -n "$buf" ]; then
       printf '%s%s%s\n' "$buf_file" "$SEP" "$buf"
     fi
