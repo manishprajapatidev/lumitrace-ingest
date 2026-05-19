@@ -593,6 +593,8 @@ process_lines() {
   local line_count=0
   while IFS= read -r line; do
     [ -z "$line" ] && continue
+    # Skip tail multi-file headers: ==> /path/to/file.log <==
+    [[ "$line" =~ ^==\>.*\<==$ ]] && continue
     local result
     result="$("$1" "$line")" || continue
     [ -z "$result" ] && continue
@@ -626,12 +628,51 @@ else
         continue
       fi
       slog "Tailing ${#files[@]} file(s) [source-type=$SOURCE_TYPE parser=${PARSER:-plain}]..."
-      tail -n0 -F "${files[@]}" || true
+      # Tail each file in its own subshell and prefix each line with the
+      # filename so process_lines can attach it as an attribute.
+      # Format: \x00<filename>\x00<log line>
+      local pids=()
+      for f in "${files[@]}"; do
+        tail -n0 -F "$f" 2>/dev/null | while IFS= read -r l; do
+          printf '\x00%s\x00%s\n' "$f" "$l"
+        done &
+        pids+=($!)
+      done
+      # Wait until any subshell exits (file removed) then restart the loop
+      wait "${pids[0]}" 2>/dev/null || true
+      for pid in "${pids[@]}"; do kill "$pid" 2>/dev/null || true; done
       sleep 1
     done
   }
 
-  tail_log_files | process_lines json_line_file
+  # Wrapper that strips the filename prefix and adds it as an attribute
+  json_line_file_with_source() {
+    local raw="$1"
+    local log_file=""
+    # Detect prefixed lines from multi-file tail above
+    if [[ "$raw" == $'\x00'* ]]; then
+      log_file="${raw#$'\x00'}"
+      log_file="${log_file%%$'\x00'*}"
+      raw="${raw#*$'\x00'${log_file}$'\x00'}"
+    fi
+    local result
+    result="$(json_line_file "$raw")" || return 1
+    [ -z "$result" ] && return 1
+    if [ -n "$log_file" ]; then
+      local fname
+      fname="$(basename "$log_file")"
+      # derive process name: strip -out.log / -error.log suffix
+      local proc
+      proc="$(echo "$fname" | sed 's/-\(out\|error\)\.log$//')"
+      result="$(echo "$result" | jq -c \
+        --arg lf "$log_file" \
+        --arg proc "$proc" \
+        '.attributes += {log_file: $lf, process: $proc}')"
+    fi
+    echo "$result"
+  }
+
+  tail_log_files | process_lines json_line_file_with_source
 fi
 SHIPPER
 
