@@ -1,7 +1,7 @@
 /**
  * Domain types shared across services and routes.
  */
-export type SourceType = 'pm2' | 'nginx' | 'apache' | 'journald' | 'file' | 'http' | 'docker' | 'laravel' | 'mysql' | 'postgresql' | 'syslog';
+export type SourceType = 'nodejs' | 'php' | 'python' | 'pm2' | 'nginx' | 'apache' | 'journald' | 'file' | 'http' | 'docker' | 'laravel' | 'mysql' | 'postgresql' | 'syslog';
 export type AlertConditionType = 'keyword' | 'threshold' | 'error_rate';
 export type NotifType = 'webhook' | 'slack' | 'email';
 export type SourceStatus = 'awaiting' | 'live' | 'stale' | 'error';
