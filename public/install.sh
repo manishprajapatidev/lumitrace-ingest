@@ -619,6 +619,9 @@ elif [ "$SOURCE_TYPE" = "docker" ]; then
   docker logs --follow --timestamps "$CONTAINER" 2>&1 | process_lines json_line_file
 
 else
+  # SEP is a tab character — never appears in file paths, extremely rare in logs
+  SEP=$'\t'
+
   tail_log_files() {
     while true; do
       mapfile -t files < <(compgen -G "$LOG_GLOB" 2>/dev/null || true)
@@ -628,51 +631,70 @@ else
         continue
       fi
       slog "Tailing ${#files[@]} file(s) [source-type=$SOURCE_TYPE parser=${PARSER:-plain}]..."
-      # Tail each file in its own subshell and prefix each line with the
-      # filename so process_lines can attach it as an attribute.
-      # Format: \x00<filename>\x00<log line>
+      # Tail each file in its own subshell; prefix every line with
+      # "<filepath><TAB>" so we can recover the source filename downstream.
       local pids=()
       for f in "${files[@]}"; do
-        tail -n0 -F "$f" 2>/dev/null | while IFS= read -r l; do
-          printf '\x00%s\x00%s\n' "$f" "$l"
-        done &
+        tail -n0 -F "$f" 2>/dev/null | awk -v f="$f" -v OFS='\t' '{print f, $0}' &
         pids+=($!)
       done
-      # Wait until any subshell exits (file removed) then restart the loop
       wait "${pids[0]}" 2>/dev/null || true
       for pid in "${pids[@]}"; do kill "$pid" 2>/dev/null || true; done
       sleep 1
     done
   }
 
-  # Wrapper that strips the filename prefix and adds it as an attribute
+  # Multiline aggregator for Node.js stack traces.
+  # Continuation lines (starting with whitespace+"at " or whitespace+at the
+  # very least just whitespace) are appended to the previous line's message.
+  aggregate_multiline() {
+    local buf="" buf_file=""
+    local flush_buf() {
+      [ -z "$buf" ] && return
+      printf '%s%s%s\n' "$buf_file" "$SEP" "$buf"
+      buf=""; buf_file=""
+    }
+    while IFS= read -r line; do
+      # Extract file prefix (everything before first TAB)
+      local file="${line%%$SEP*}"
+      local content="${line#*$SEP}"
+      # Continuation: indented line (stack trace "    at ..." or "      ...")
+      if [[ "$content" =~ ^[[:space:]]+(at |[A-Z]|[a-z]) ]] && [ -n "$buf" ]; then
+        buf="${buf}\n${content}"
+      else
+        flush_buf
+        buf="$content"
+        buf_file="$file"
+      fi
+    done
+    flush_buf
+  }
+
+  # Strip the TAB-prefixed filename, parse the log line, attach file attributes
   json_line_file_with_source() {
     local raw="$1"
-    local log_file=""
-    # Detect prefixed lines from multi-file tail above
-    if [[ "$raw" == $'\x00'* ]]; then
-      log_file="${raw#$'\x00'}"
-      log_file="${log_file%%$'\x00'*}"
-      raw="${raw#*$'\x00'${log_file}$'\x00'}"
+    local log_file="" content="$raw"
+    if [[ "$raw" == *"$SEP"* ]]; then
+      log_file="${raw%%$SEP*}"
+      content="${raw#*$SEP}"
     fi
+    # Unescape \n back to actual newlines for the message field
+    content="$(printf '%b' "$content")"
     local result
-    result="$(json_line_file "$raw")" || return 1
+    result="$(json_line_file "$content")" || return 1
     [ -z "$result" ] && return 1
     if [ -n "$log_file" ]; then
-      local fname
-      fname="$(basename "$log_file")"
-      # derive process name: strip -out.log / -error.log suffix
       local proc
-      proc="$(echo "$fname" | sed 's/-\(out\|error\)\.log$//')"
-      result="$(echo "$result" | jq -c \
+      proc="$(basename "$log_file" | sed 's/-\(out\|error\)\.log$//')"
+      result="$(printf '%s' "$result" | jq -c \
         --arg lf "$log_file" \
         --arg proc "$proc" \
         '.attributes += {log_file: $lf, process: $proc}')"
     fi
-    echo "$result"
+    printf '%s\n' "$result"
   }
 
-  tail_log_files | process_lines json_line_file_with_source
+  tail_log_files | aggregate_multiline | process_lines json_line_file_with_source
 fi
 SHIPPER
 
