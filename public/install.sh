@@ -220,6 +220,28 @@ ensure_user_group() {
   mkdir -p "$DATA_DIR_DEFAULT"
   chown "$APP_USER_DEFAULT:$APP_GROUP_DEFAULT" "$DATA_DIR_DEFAULT"
   chmod 750 "$DATA_DIR_DEFAULT"
+
+  # Auto-grant read access to log directories.
+  # Strip glob chars to get the base directory, then find its owner and add
+  # lumitrace-agent to that group so it can traverse and read the files.
+  if [ -n "$LOG_GLOB" ]; then
+    local log_dir
+    log_dir="$(dirname "$LOG_GLOB" | tr -d '*?')"
+    # Walk up until we find a directory that actually exists
+    while [ -n "$log_dir" ] && [ "$log_dir" != "/" ] && [ ! -d "$log_dir" ]; do
+      log_dir="$(dirname "$log_dir")"
+    done
+    if [ -d "$log_dir" ]; then
+      local dir_owner
+      dir_owner="$(stat -c '%U' "$log_dir" 2>/dev/null || true)"
+      if [ -n "$dir_owner" ] && [ "$dir_owner" != "root" ] && [ "$dir_owner" != "$APP_USER_DEFAULT" ]; then
+        if getent group "$dir_owner" >/dev/null 2>&1; then
+          usermod -aG "$dir_owner" "$APP_USER_DEFAULT"
+          slog "Added $APP_USER_DEFAULT to group '$dir_owner' for log access"
+        fi
+      fi
+    fi
+  fi
 }
 
 write_env_file() {
