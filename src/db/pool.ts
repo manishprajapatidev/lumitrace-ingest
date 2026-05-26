@@ -22,19 +22,45 @@ pool.on('error', (err) => {
 
 export type SqlValue = string | number | boolean | Date | null | object;
 
+function compactSql(text: string): string {
+  return text.replace(/\s+/g, ' ').trim();
+}
+
 export async function query<T extends pg.QueryResultRow = pg.QueryResultRow>(
   text: string,
   params: ReadonlyArray<SqlValue> = [],
 ): Promise<pg.QueryResult<T>> {
   const start = process.hrtime.bigint();
+  let client: pg.PoolClient | null = null;
   try {
-    const res = await pool.query<T>(text, params as SqlValue[]);
-    const ms = Number(process.hrtime.bigint() - start) / 1e6;
-    if (ms > 200) logger.warn({ ms, rows: res.rowCount, text: text.slice(0, 80) }, 'slow query');
+    client = await pool.connect();
+    const acquiredAt = process.hrtime.bigint();
+    const res = await client.query<T>(text, params as SqlValue[]);
+    const finishedAt = process.hrtime.bigint();
+
+    const waitMs = Number(acquiredAt - start) / 1e6;
+    const execMs = Number(finishedAt - acquiredAt) / 1e6;
+    const totalMs = Number(finishedAt - start) / 1e6;
+    if (totalMs > 200) {
+      const sql = compactSql(text);
+      logger.warn(
+        {
+          ms: totalMs,
+          waitMs,
+          execMs,
+          rows: res.rowCount,
+          text: sql.length > 240 ? `${sql.slice(0, 240)}...` : sql,
+        },
+        'slow query',
+      );
+    }
     return res;
   } catch (err) {
-    logger.error({ err, text: text.slice(0, 200) }, 'pg query failed');
+    const sql = compactSql(text);
+    logger.error({ err, text: sql.length > 400 ? `${sql.slice(0, 400)}...` : sql }, 'pg query failed');
     throw err;
+  } finally {
+    client?.release();
   }
 }
 

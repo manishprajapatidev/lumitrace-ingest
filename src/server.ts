@@ -5,11 +5,13 @@
 import { buildApp } from './app.js';
 import { config } from './config/index.js';
 import { logger } from './lib/logger.js';
+import { query } from './db/pool.js';
 import { shutdownPool } from './db/pool.js';
 import { sweepStaleSources } from './services/sourceService.js';
 
 async function main(): Promise<void> {
   const app = await buildApp();
+  await query('SELECT 1');
 
   const sweep = setInterval(() => {
     void sweepStaleSources()
